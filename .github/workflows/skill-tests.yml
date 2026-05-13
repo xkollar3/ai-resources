@@ -1,0 +1,27 @@
+name: Skill Tests
+
+on:
+  push:
+    paths:
+      - "skills/execute-maven-tests/**"
+      - ".github/workflows/skill-tests.yml"
+  pull_request:
+    paths:
+      - "skills/execute-maven-tests/**"
+      - ".github/workflows/skill-tests.yml"
+
+jobs:
+  execute-maven-tests-skill-tests:
+    name: Execute Maven Tests Skill Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run skill unit tests
+        run: python -m unittest discover -s skills/execute-maven-tests/tests -p "test_*.py"

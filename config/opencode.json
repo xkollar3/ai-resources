@@ -1,0 +1,75 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "ask",
+    "read *": "allow",
+    "glob *": "allow",
+    "grep *": "allow",
+    "list *": "allow",
+    "task *": "allow",
+    "todoread *": "allow",
+    "todowrite *": "allow",
+    "ls *": "allow",
+    "find *": "allow",
+    "head *": "allow",
+    "cat *": "allow",
+    "xargs *": "allow"
+  },
+  "provider": {},
+  "agent": {
+    "explore": {
+      "mode": "subagent",
+      "model": "github-copilot/claude-sonnet-4.6",
+      "description": "Thorough codebase exploration. Use for complex searches, understanding architecture, tracing data flows, analyzing dependencies, or when you need comprehensive analysis across multiple files and locations.",
+      "permission": {
+        "read *": "allow",
+        "glob *": "allow",
+        "grep *": "allow",
+        "list *": "allow",
+        "ls *": "allow",
+        "find *": "allow",
+        "head *": "allow",
+        "cat *": "allow",
+        "task *": "allow",
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "explore-fast": {
+      "mode": "subagent",
+      "model": "anthropic/claude-haiku-4-5",
+      "description": "Quick, lightweight codebase lookups. Use for simple file searches, finding a specific definition or function, checking file existence, or answering straightforward single-location questions about the code.",
+      "permission": {
+        "read *": "allow",
+        "glob *": "allow",
+        "grep *": "allow",
+        "list *": "allow",
+        "ls *": "allow",
+        "find *": "allow",
+        "head *": "allow",
+        "cat *": "allow",
+        "task *": "allow",
+        "edit": "deny",
+        "bash": "deny"
+      }
+    }
+  },
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@playwright/mcp@latest"
+      ]
+    },
+    "simple-memory-system": {
+      "type": "remote",
+      "url": "http://localhost:8080/sse",
+      "enabled": true
+    }
+  },
+  "plugin": [
+    "opencode-claude-auth"
+  ]
+}

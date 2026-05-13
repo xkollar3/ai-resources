@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# OpenCode commit sanity check - pre-commit hook (advisory).
+#
+# Skips:
+#   git commit --no-verify              (standard)
+#   SKIP_COMMIT_REVIEW=1 git commit ... (env var)
+#
+# Tunables:
+#   COMMIT_REVIEW_TIMEOUT     hard timeout in seconds (default: 45)
+#   COMMIT_REVIEW_MAX_LINES   skip if staged diff exceeds this (default: 1500)
+#   COMMIT_REVIEW_AGENT       agent name (default: commit-review)
+
+set -u
+
+# --- skip conditions -----------------------------------------------------
+
+[ "${SKIP_COMMIT_REVIEW:-0}" = "1" ] && exit 0
+
+if ! command -v opencode >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Nothing staged, nothing to review.
+if git diff --cached --quiet; then
+  exit 0
+fi
+
+# Bail on huge diffs (vendored deps, lockfile dumps, big regenerations).
+MAX_LINES="${COMMIT_REVIEW_MAX_LINES:-1500}"
+DIFF_LINES=$(git diff --cached --no-color | wc -l)
+if [ "$DIFF_LINES" -gt "$MAX_LINES" ]; then
+  printf '[commit-review] diff is %s lines (>%s), skipping. Set COMMIT_REVIEW_MAX_LINES to override.\n' \
+    "$DIFF_LINES" "$MAX_LINES" >&2
+  exit 0
+fi
+
+# --- run review ----------------------------------------------------------
+
+DIFF_FILE=$(mktemp -t commit-review-XXXXXX.diff)
+trap 'rm -f "$DIFF_FILE"' EXIT
+git diff --cached --no-color > "$DIFF_FILE"
+
+TIMEOUT="${COMMIT_REVIEW_TIMEOUT:-45}"
+AGENT="${COMMIT_REVIEW_AGENT:-commit-review}"
+
+printf '[commit-review] sanity check (skip with --no-verify or SKIP_COMMIT_REVIEW=1)...\n' >&2
+
+# Always exit 0 — this hook is advisory, never blocks the commit.
+# NOTE: positional message MUST come before -f, otherwise the -f array
+# consumes the message string and opencode treats it as a missing file.
+timeout "${TIMEOUT}s" opencode run \
+  "Sanity-check the attached staged diff per your system prompt. Be terse." \
+  --agent "$AGENT" \
+  -f "$DIFF_FILE"
+rc=$?
+
+if [ "$rc" -eq 124 ]; then
+  printf '[commit-review] timed out after %ss — proceeding with commit.\n' "$TIMEOUT" >&2
+elif [ "$rc" -ne 0 ]; then
+  printf '[commit-review] reviewer exited %s — proceeding with commit.\n' "$rc" >&2
+fi
+
+exit 0
