@@ -1,6 +1,6 @@
 # AI resources
 
-Repository containing various resources to improve AI coding agents capabilities.
+Repository containing various resources for improving AI coding agents' capabilities.
 
 ## Contents
 
