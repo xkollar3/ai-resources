@@ -20,8 +20,16 @@ type PromptRuntimeContext = Pick<
 >;
 
 type SendUserPrompt = (prompt: string) => void | Promise<void>;
+type StatusMessage = {
+  customType: string;
+  content: string;
+  display: boolean;
+  details?: unknown;
+};
+type SendStatusMessage = (message: StatusMessage) => void | Promise<void>;
 
 const INTERNAL_POSTCHECK_COMMAND = "_plan_implement_postcheck";
+const STATUS_CUSTOM_TYPE = "plan-and-implement-status";
 const AGENTS_DIR = "agents";
 
 function substitutePositionalArgs(template: string, values: string[]): string {
@@ -206,6 +214,24 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+async function notifyProgress(
+  ctx: Pick<ExtensionCommandContext, "ui">,
+  message: string,
+  type: "info" | "warning" | "error",
+  sendStatusMessage?: SendStatusMessage,
+): Promise<void> {
+  ctx.ui.notify(message, type);
+
+  if (sendStatusMessage) {
+    await sendStatusMessage({
+      customType: STATUS_CUSTOM_TYPE,
+      content: message,
+      display: true,
+      details: { type },
+    });
+  }
+}
+
 async function sendPromptAndWaitForCompletion(
   sendUserPrompt: SendUserPrompt,
   ctx: PromptRuntimeContext,
@@ -227,8 +253,9 @@ async function sendPromptAndWaitForCompletion(
 async function runPostImplementationGuardrails(
   ctx: ExtensionCommandContext,
   sendUserPrompt: SendUserPrompt,
+  sendStatusMessage?: SendStatusMessage,
 ): Promise<PostImplementationGuardrailOutcome> {
-  ctx.ui.notify("Post-check 1/2: verifying implementation scope", "info");
+  await notifyProgress(ctx, "Post-check 1/2: verifying implementation scope", "info", sendStatusMessage);
 
   // 1) Hard scope check (blocking)
   try {
@@ -240,7 +267,12 @@ async function runPostImplementationGuardrails(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    ctx.ui.notify("Scope guardrail failed. Requesting infeasibility report.", "error");
+    await notifyProgress(
+      ctx,
+      "Scope guardrail failed. Requesting infeasibility report.",
+      "error",
+      sendStatusMessage,
+    );
 
     await sendPromptAndWaitForCompletion(
       sendUserPrompt,
@@ -255,7 +287,12 @@ async function runPostImplementationGuardrails(
     return "scope_failed";
   }
 
-  ctx.ui.notify("Post-check 2/2: reporting planned tests coverage", "info");
+  await notifyProgress(
+    ctx,
+    "Post-check 2/2: reporting planned tests coverage",
+    "info",
+    sendStatusMessage,
+  );
 
   // 2) Missing test check (warning-only)
   const missingTestsResult = await runGuardrail(
@@ -271,11 +308,21 @@ async function runPostImplementationGuardrails(
     .trim();
 
   if (summary.includes("[guardrail] WARNING:")) {
-    ctx.ui.notify("Implementation finished with missing-tests warnings", "warning");
+    await notifyProgress(
+      ctx,
+      "Implementation finished with missing-tests warnings",
+      "warning",
+      sendStatusMessage,
+    );
     return "warnings";
   }
 
-  ctx.ui.notify("Implementation finished and guardrails passed", "info");
+  await notifyProgress(
+    ctx,
+    "Implementation finished and guardrails passed",
+    "info",
+    sendStatusMessage,
+  );
   return "passed";
 }
 
@@ -298,11 +345,21 @@ export default function (pi: ExtensionAPI) {
       const planTemplate = await loadAgentPrompt(ctx, "plan.md");
       const implementPrompt = await loadAgentPrompt(ctx, "implement.md");
 
-      ctx.ui.notify("Phase 1/3: planning", "info");
+      await notifyProgress(
+        ctx,
+        "Phase 1/3: planning",
+        "info",
+        (message) => pi.sendMessage(message),
+      );
       const planPrompt = substitutePositionalArgs(planTemplate, [parsed.feature, parsed.notes]);
       await sendPromptAndWaitForCompletion((prompt) => pi.sendUserMessage(prompt), ctx, planPrompt);
 
-      ctx.ui.notify("Phase 2/3: validating planner artifacts", "info");
+      await notifyProgress(
+        ctx,
+        "Phase 2/3: validating planner artifacts",
+        "info",
+        (message) => pi.sendMessage(message),
+      );
       await runGuardrail(
         await resolveRequiredExecutable(ctx, "guardrails", "validate-planner-output.sh"),
         ["plan.md", "affected_files.jsonl"],
@@ -310,7 +367,12 @@ export default function (pi: ExtensionAPI) {
         "planner output validation",
       );
 
-      ctx.ui.notify("Phase 3/3: new session + implementation", "info");
+      await notifyProgress(
+        ctx,
+        "Phase 3/3: new session + implementation",
+        "info",
+        (message) => pi.sendMessage(message),
+      );
       const sessionResult = await ctx.newSession({
         parentSession: ctx.sessionManager.getSessionFile(),
         withSession: async (newCtx) => {
@@ -327,7 +389,11 @@ export default function (pi: ExtensionAPI) {
           }
 
           // Always run post-implementation checks, even when implementation had issues.
-          await runPostImplementationGuardrails(newCtx, (prompt) => newCtx.sendUserMessage(prompt));
+          await runPostImplementationGuardrails(
+            newCtx,
+            (prompt) => newCtx.sendUserMessage(prompt),
+            (message) => newCtx.sendMessage(message),
+          );
 
           if (implementationError) {
             const message =
@@ -353,7 +419,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand(INTERNAL_POSTCHECK_COMMAND, {
     description: "Internal command: run scope + missing-tests guardrails",
     handler: async (_args, ctx) => {
-      await runPostImplementationGuardrails(ctx, (prompt) => pi.sendUserMessage(prompt));
+      await runPostImplementationGuardrails(
+        ctx,
+        (prompt) => pi.sendUserMessage(prompt),
+        (message) => pi.sendMessage(message),
+      );
     },
   });
 
