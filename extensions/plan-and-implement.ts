@@ -30,6 +30,7 @@ type SendStatusMessage = (message: StatusMessage) => void | Promise<void>;
 
 const INTERNAL_POSTCHECK_COMMAND = "_plan_implement_postcheck";
 const STATUS_CUSTOM_TYPE = "plan-and-implement-status";
+const STATUS_SLOT = "plan-and-implement";
 const AGENTS_DIR = "agents";
 
 function substitutePositionalArgs(template: string, values: string[]): string {
@@ -220,6 +221,9 @@ async function notifyProgress(
   type: "info" | "warning" | "error",
   sendStatusMessage?: SendStatusMessage,
 ): Promise<void> {
+  // Footer status updates are visible during long-running work, while
+  // notification toasts may be visually easy to miss during busy turns.
+  ctx.ui.setStatus(STATUS_SLOT, message);
   ctx.ui.notify(message, type);
 
   if (sendStatusMessage) {
@@ -255,7 +259,12 @@ async function runPostImplementationGuardrails(
   sendUserPrompt: SendUserPrompt,
   sendStatusMessage?: SendStatusMessage,
 ): Promise<PostImplementationGuardrailOutcome> {
-  await notifyProgress(ctx, "Post-check 1/2: verifying implementation scope", "info", sendStatusMessage);
+  await notifyProgress(
+    ctx,
+    "Post-check 1/2: verifying implementation scope",
+    "info",
+    sendStatusMessage,
+  );
 
   // 1) Hard scope check (blocking)
   try {
@@ -289,6 +298,12 @@ async function runPostImplementationGuardrails(
 
   await notifyProgress(
     ctx,
+    "Post-check 1/2 complete: implementation scope verified",
+    "info",
+    sendStatusMessage,
+  );
+  await notifyProgress(
+    ctx,
     "Post-check 2/2: reporting planned tests coverage",
     "info",
     sendStatusMessage,
@@ -307,7 +322,22 @@ async function runPostImplementationGuardrails(
     .join("\n")
     .trim();
 
+  const extractCount = (pattern: RegExp): number | null => {
+    const match = summary.match(pattern);
+    if (!match?.[1]) return null;
+    const parsed = Number.parseInt(match[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const detectedInDiff = extractCount(/\[guardrail\] INFO: detected in diff: (\d+)/);
+
   if (summary.includes("[guardrail] WARNING:")) {
+    const warningMessage =
+      detectedInDiff === 0
+        ? "Post-check 2/2 complete: no new tests added (planned tests were not detected)"
+        : "Post-check 2/2 complete: missing-tests warnings found";
+
+    await notifyProgress(ctx, warningMessage, "warning", sendStatusMessage);
     await notifyProgress(
       ctx,
       "Implementation finished with missing-tests warnings",
@@ -317,6 +347,12 @@ async function runPostImplementationGuardrails(
     return "warnings";
   }
 
+  const successMessage =
+    detectedInDiff === 0 || summary.includes("[guardrail] INFO: no expected tests listed in affected_files.jsonl")
+      ? "Post-check 2/2 complete: no new tests added"
+      : "Post-check 2/2 complete: planned tests coverage clean";
+
+  await notifyProgress(ctx, successMessage, "info", sendStatusMessage);
   await notifyProgress(
     ctx,
     "Implementation finished and guardrails passed",
@@ -345,14 +381,15 @@ export default function (pi: ExtensionAPI) {
       const planTemplate = await loadAgentPrompt(ctx, "plan.md");
       const implementPrompt = await loadAgentPrompt(ctx, "implement.md");
 
+      const planPrompt = substitutePositionalArgs(planTemplate, [parsed.feature, parsed.notes]);
+      await notifyProgress(ctx, "Phase 1/3: planning", "info", (message) => pi.sendMessage(message));
+      await sendPromptAndWaitForCompletion((prompt) => pi.sendUserMessage(prompt), ctx, planPrompt);
       await notifyProgress(
         ctx,
-        "Phase 1/3: planning",
+        "Phase 1/3 complete: planning finished",
         "info",
         (message) => pi.sendMessage(message),
       );
-      const planPrompt = substitutePositionalArgs(planTemplate, [parsed.feature, parsed.notes]);
-      await sendPromptAndWaitForCompletion((prompt) => pi.sendUserMessage(prompt), ctx, planPrompt);
 
       await notifyProgress(
         ctx,
@@ -366,10 +403,16 @@ export default function (pi: ExtensionAPI) {
         ctx,
         "planner output validation",
       );
+      await notifyProgress(
+        ctx,
+        "Phase 2/3 complete: planning artifacts validated",
+        "info",
+        (message) => pi.sendMessage(message),
+      );
 
       await notifyProgress(
         ctx,
-        "Phase 3/3: new session + implementation",
+        "Phase 3/3: switching to new session for implementation",
         "info",
         (message) => pi.sendMessage(message),
       );
@@ -379,34 +422,58 @@ export default function (pi: ExtensionAPI) {
           let implementationError: unknown;
 
           try {
-            await sendPromptAndWaitForCompletion(
-              (prompt) => newCtx.sendUserMessage(prompt),
+            await notifyProgress(
               newCtx,
-              implementPrompt,
+              "Phase 3/3 started: new session + implementation",
+              "info",
+              (message) => newCtx.sendMessage(message),
             );
-          } catch (error) {
-            implementationError = error;
-          }
 
-          // Always run post-implementation checks, even when implementation had issues.
-          await runPostImplementationGuardrails(
-            newCtx,
-            (prompt) => newCtx.sendUserMessage(prompt),
-            (message) => newCtx.sendMessage(message),
-          );
+            try {
+              await sendPromptAndWaitForCompletion(
+                (prompt) => newCtx.sendUserMessage(prompt),
+                newCtx,
+                implementPrompt,
+              );
+              await notifyProgress(
+                newCtx,
+                "Implementation completed; running post-implementation guardrails",
+                "info",
+                (message) => newCtx.sendMessage(message),
+              );
+            } catch (error) {
+              implementationError = error;
+              await notifyProgress(
+                newCtx,
+                "Implementation encountered an error; running post-implementation guardrails anyway",
+                "warning",
+                (message) => newCtx.sendMessage(message),
+              );
+            }
 
-          if (implementationError) {
-            const message =
-              implementationError instanceof Error
-                ? implementationError.message
-                : String(implementationError);
-            newCtx.ui.notify(`Implementation phase failed: ${message}`, "error");
-            throw implementationError;
+            // Always run post-implementation checks, even when implementation had issues.
+            await runPostImplementationGuardrails(
+              newCtx,
+              (prompt) => newCtx.sendUserMessage(prompt),
+              (message) => newCtx.sendMessage(message),
+            );
+
+            if (implementationError) {
+              const message =
+                implementationError instanceof Error
+                  ? implementationError.message
+                  : String(implementationError);
+              newCtx.ui.notify(`Implementation phase failed: ${message}`, "error");
+              throw implementationError;
+            }
+          } finally {
+            newCtx.ui.setStatus(STATUS_SLOT, undefined);
           }
         },
       });
 
       if (sessionResult.cancelled) {
+        ctx.ui.setStatus(STATUS_SLOT, undefined);
         ctx.ui.notify("Automatic implementation handover cancelled", "warning");
         return;
       }
@@ -419,11 +486,15 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand(INTERNAL_POSTCHECK_COMMAND, {
     description: "Internal command: run scope + missing-tests guardrails",
     handler: async (_args, ctx) => {
-      await runPostImplementationGuardrails(
-        ctx,
-        (prompt) => pi.sendUserMessage(prompt),
-        (message) => pi.sendMessage(message),
-      );
+      try {
+        await runPostImplementationGuardrails(
+          ctx,
+          (prompt) => pi.sendUserMessage(prompt),
+          (message) => pi.sendMessage(message),
+        );
+      } finally {
+        ctx.ui.setStatus(STATUS_SLOT, undefined);
+      }
     },
   });
 
