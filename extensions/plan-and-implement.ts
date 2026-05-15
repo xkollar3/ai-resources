@@ -311,8 +311,6 @@ export default function (pi: ExtensionAPI) {
       );
 
       ctx.ui.notify("Phase 3/3: new session + implementation", "info");
-      let postcheckOutcome: PostImplementationGuardrailOutcome | null = null;
-
       const sessionResult = await ctx.newSession({
         parentSession: ctx.sessionManager.getSessionFile(),
         withSession: async (newCtx) => {
@@ -329,10 +327,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           // Always run post-implementation checks, even when implementation had issues.
-          postcheckOutcome = await runPostImplementationGuardrails(
-            newCtx,
-            (prompt) => newCtx.sendUserMessage(prompt),
-          );
+          await runPostImplementationGuardrails(newCtx, (prompt) => newCtx.sendUserMessage(prompt));
 
           if (implementationError) {
             const message =
@@ -350,15 +345,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Mirror final guardrail outcome in the caller session. Notifications emitted inside
-      // the temporary implementation session can be missed when that session closes quickly.
-      if (postcheckOutcome === "passed") {
-        ctx.ui.notify("Implementation finished and guardrails passed", "info");
-      } else if (postcheckOutcome === "warnings") {
-        ctx.ui.notify("Implementation finished with missing-tests warnings", "warning");
-      } else if (postcheckOutcome === "scope_failed") {
-        ctx.ui.notify("Scope guardrail failed. Infeasibility report requested.", "error");
-      }
+      // Do not use the pre-replacement command ctx after a successful newSession().
+      // All session-bound notifications are emitted from the replacement-session ctx.
     },
   });
 
