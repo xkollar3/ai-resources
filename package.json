@@ -1,0 +1,11 @@
+{
+  "name": "ai-resources",
+  "private": "true",
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@mariozechner/pi-ai": "^0.73.1",
+    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@mariozechner/pi-tui": "^0.73.1",
+    "@sinclair/typebox": "^0.34.49"
+  }
+}
