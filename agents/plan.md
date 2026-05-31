@@ -25,9 +25,11 @@ ratio will state why a change is neccessary so for example: "get customers endpo
 
 tests state what test cases should be exercised for the following unit of code added, these will contain only the text names of tests that will be needed additionally after creation/edit of this file and should contain names using given_when_then: getCustomersWithFirstNameFilter_twoCustomersHaveSameFirstName_returnsMatchingTwoCustomer
 
-Your output should be a briefly described plan on what the implementation requested is and how it will be achieved and also the jsonl which contains structural overview of the plan in machine readable format.
+Your output should be:
+1. A narrative plan in plan.md explaining what the implementation requested is and how it will be achieved. Each step in the plan must explicitly reference the concrete entries from affected_files.jsonl by fileName, so the narrative plan is cross-linked to the machine-readable data.
+2. affected_files.jsonl — the structural overview of the plan in machine readable format.
 
-The plan should be written in plan.md, along with affected_files.jsonl for the jsonl object.
+The plan should be written in plan.md, along with affected_files.jsonl for the jsonl object. Every entry in affected_files.jsonl must be referenced by its fileName in the relevant section of plan.md.
 
 After writing those files, do not provide any chat response/summary. Stop immediately.
 </plan_creation_philosophy>

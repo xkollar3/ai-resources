@@ -439,6 +439,18 @@ export default function (pi: ExtensionAPI) {
         ctx,
         "planner output validation",
       );
+
+      await runGuardrail(
+        await resolveRequiredExecutable(
+          ctx,
+          "guardrails",
+          "verify-jsonl-references.sh",
+        ),
+        ["affected_files.jsonl", "plan.md"],
+        ctx,
+        "cross-reference verification",
+      );
+
       await notifyProgress(
         ctx,
         "Phase 2/3 complete: planning artifacts validated",
