@@ -60,7 +60,7 @@ if parse_errors:
         print(f"[guardrail] ERROR: JSONL parsing: {e}", file=sys.stderr)
 
 if not filenames:
-    print("[guardrail] ERROR: no fileName entries found in JSONL" >&2, file=sys.stderr)
+    print("[guardrail] ERROR: no fileName entries found in JSONL", file=sys.stderr)
     sys.exit(1)
 
 missing = []
