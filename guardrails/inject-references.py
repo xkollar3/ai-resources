@@ -46,30 +46,27 @@ def collect_entries(jsonl_path: Path) -> dict[str, dict]:
 
 
 def format_replacement(file_name: str, entry: dict) -> str:
-    """Build a compact inline replacement string from a JSONL entry."""
+    """Build a per-field-per-line replacement string from a JSONL entry."""
     action = entry.get("action", "?")
     context = str(entry.get("actionContext", "") or "").strip()
     ratio = entry.get("ratio")
     tests = entry.get("tests", [])
 
-    parts = [f'{file_name} ({action}']
+    lines = [f"- fileName: {file_name}"]
+    lines.append(f"  action: {action}")
 
     if context:
-        context_short = context if len(context) <= 100 else context[:97] + "..."
-        parts.append(f' — "{context_short}"')
+        lines.append(f"  context: {context}")
 
     if ratio and isinstance(ratio, str) and ratio.strip():
-        ratio_short = ratio.strip() if len(ratio.strip()) <= 60 else ratio.strip()[:57] + "..."
-        parts.append(f' | {ratio_short}')
-
-    parts.append(")")
+        lines.append(f"  ratio: {ratio.strip()}")
 
     if tests:
-        test_names = ", ".join(str(t) for t in tests if isinstance(t, str))
+        test_names = [str(t) for t in tests if isinstance(t, str)]
         if test_names:
-            parts.append(f" [tests: {test_names}]")
+            lines.append(f"  tests: {', '.join(test_names)}")
 
-    return "".join(parts)
+    return "\n".join(lines)
 
 
 def inject(jsonl_path: Path, plan_path: Path, output_path: Path) -> None:
@@ -90,24 +87,28 @@ def inject(jsonl_path: Path, plan_path: Path, output_path: Path) -> None:
 
     plan_text = plan_path.read_text(encoding="utf-8")
 
-    # Sort by length descending so longer paths match before shorter substrings
-    # e.g. "src/foo/bar.ts" before "bar.ts"
+    # Build the replacement block: all entries as per-field-per-line blocks
+    replacement_lines = []
     for file_name in sorted(entries, key=len, reverse=True):
-        entry = entries[file_name]
-        replacement = format_replacement(file_name, entry)
-        escaped_fn = re.escape(file_name)
+        replacement_lines.append(format_replacement(file_name, entries[file_name]))
+    replacement_block = "\n".join(replacement_lines)
 
-        # Try full-path match first, then basename match
-        patterns = [rf'\b{escaped_fn}\b']
-        basename = Path(file_name).name
-        if basename != file_name:
-            patterns.append(rf'\b{re.escape(basename)}\b')
+    # Replace markdown table under "**Affected file:" (or "**Affected files:")
+    # Pattern: the heading line, then a markdown table (header row, separator row, data rows)
+    # This regex captures everything after the heading until the next blank-line-delimited section
+    # or end of string.
+    table_pattern = re.compile(
+        r'(\*\*Affected files?:\*\*)\n+'
+        r'\|\s*fileName\s*\|.*\n'     # header row
+        r'\|\s*:?--+:?\s*\|.*\n'        # separator row
+        r'(?:\|.*\n)*',                  # data rows
+        re.MULTILINE
+    )
 
-        for pattern in patterns:
-            new_text, count = re.subn(pattern, replacement, plan_text)
-            if count > 0:
-                plan_text = new_text
-                break
+    plan_text = table_pattern.sub(
+        lambda m: m.group(1) + "\n\n" + replacement_block,
+        plan_text
+    )
 
     output_path.write_text(plan_text, encoding="utf-8")
     injected = len(entries)
