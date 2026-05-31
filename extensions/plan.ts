@@ -74,6 +74,28 @@ async function resolveRequiredExecutable(
   );
 }
 
+async function resolveScriptPath(
+  ctx: ExtensionCommandContext,
+  dir: string,
+  fileName: string,
+): Promise<string> {
+  const candidatePaths = getCandidateResourcePaths(ctx, dir, fileName);
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      await access(candidatePath, constants.R_OK);
+      return candidatePath;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  const searched = candidatePaths.map((p) => ` - ${p}`).join("\n");
+  throw new Error(
+    `missing required script: ${fileName}\nSearched:\n${searched}`,
+  );
+}
+
 async function loadAgentPrompt(
   ctx: ExtensionCommandContext,
   fileName: string,
@@ -314,13 +336,14 @@ export default function (pi: ExtensionAPI) {
         "planner output validation",
       );
 
+      const verifyScript = await resolveScriptPath(
+        ctx,
+        "guardrails",
+        "verify-jsonl-references.py",
+      );
       await runGuardrail(
-        await resolveRequiredExecutable(
-          ctx,
-          "guardrails",
-          "verify-jsonl-references.sh",
-        ),
-        ["affected_files.jsonl", "plan.md"],
+        "python3",
+        [verifyScript, "affected_files.jsonl", "plan.md"],
         ctx,
         "cross-reference verification",
       );
