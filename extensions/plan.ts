@@ -348,7 +348,19 @@ export default function (pi: ExtensionAPI) {
         "cross-reference verification",
       );
 
-      await notifyProgress(ctx, "Plan ready", "info");
+      const injectScript = await resolveScriptPath(
+        ctx,
+        "guardrails",
+        "inject-references.py",
+      );
+      await runGuardrail(
+        "python3",
+        [injectScript, "affected_files.jsonl", "plan.md", "plan-full.md"],
+        ctx,
+        "reference injection",
+      );
+
+      await notifyProgress(ctx, "Plan ready (plan-full.md contains full details)", "info");
     },
   });
 }
